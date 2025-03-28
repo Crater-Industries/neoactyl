@@ -22,6 +22,7 @@ export const authOptions = {
           DiscordProvider({
             clientId: config.discord.clientId,
             clientSecret: config.discord.clientSecret,
+            authorization: { params: { scope: 'identify email' } }
           }),
         ]
       : []),
@@ -30,6 +31,7 @@ export const authOptions = {
           GoogleProvider({
             clientId: config.google.clientId,
             clientSecret: config.google.clientSecret,
+            authorization: { params: { scope: 'openid email profile' } }
           }),
         ]
       : []),
@@ -38,38 +40,53 @@ export const authOptions = {
       credentials: {
         email: {
           label: "Email",
-          type: "text",
+          type: "email",
           placeholder: "email@example.com",
         },
-        password: { label: "Password", type: "password" },
+        password: { 
+          label: "Password", 
+          type: "password",
+          placeholder: "••••••••"
+        },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          throw new Error("Missing email or password");
-        }
+        try {
+          if (!credentials?.email || !credentials?.password) {
+            throw new Error("Please enter both email and password");
+          }
 
-        const user = await User.findOne({
-          where: { email: credentials.email },
-        });
-        if (!user) {
-          throw new Error("User not found");
-        }
+          const user = await User.findOne({
+            where: { email: credentials.email },
+          });
 
-        const isValid = await bcrypt.compare(
-          credentials.password,
-          user.password
-        );
-        if (!isValid) {
-          throw new Error("Invalid credentials");
-        }
+          if (!user) {
+            throw new Error("No user found with this email");
+          }
 
-        return user;
+          if (user.isSuspended) {
+            throw new Error("Account is suspended");
+          }
+
+          const isValid = await bcrypt.compare(
+            credentials.password,
+            user.password
+          );
+
+          if (!isValid) {
+            throw new Error("Invalid password");
+          }
+
+          return user;
+        } catch (error) {
+          throw new Error(error.message || "Authentication failed");
+        }
       },
     }),
   ],
   secret: config.general.jwtSecret,
   session: {
     strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   callbacks: {
     async session({ session, token }) {
@@ -80,22 +97,26 @@ export const authOptions = {
           lastname: token.lastname,
           username: token.username,
           email: token.email,
+          isSuspended: token.isSuspended,
         };
       }
       return session;
     },
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
       if (user) {
         token.id = user.id;
         token.firstname = user.firstname;
         token.lastname = user.lastname;
         token.username = user.username;
         token.email = user.email;
+        token.isSuspended = user.isSuspended;
       }
       return token;
     },
   },
   pages: {
     signIn: "/auth/login",
+    error: '/auth/error',
   },
+  debug: process.env.NODE_ENV === 'development',
 };
